@@ -1,6 +1,6 @@
-# Linear Scan
+# Sequential Scan
 
-This repo contains two implementations of a linear/sequential scan. The scan we compute a recurrence of the form: $h_{t+1} = a_{t+1}\odot h_t + b_{t+1}$ where $h_t,a_t,b_t \in \mathbb{R}^n$. The motivation for this code stems from `Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models` which proposes a (diagonal) RNN with gated linear recurrences, Hawk. On TPU, the authors note that the tree-based parallal associcative scan actually obtains a slower runtime than a linear/sequential scan. On GPU, [the same results seem to hold](https://twitter.com/SonglinYang4/status/1763598848130453728).
+This repo contains two implementations of a sequential/linear scan. The scan we compute a recurrence of the form: $h_{t+1} = a_{t+1}\odot h_t + b_{t+1}$ where $h_t,a_t,b_t \in \mathbb{R}^n$. The motivation for this code stems from `Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models` which proposes a (diagonal) RNN with gated linear recurrences, Hawk. On TPU, the authors note that the tree-based parallal associcative scan actually obtains a slower runtime than a sequential/linear scan. On GPU, [the same results seem to hold](https://twitter.com/SonglinYang4/status/1763598848130453728).
 
 # Installation
 
