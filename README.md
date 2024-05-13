@@ -77,7 +77,6 @@ Forward + Backward runtimes, `accelerated-scan` is included as it includes a hig
 
 Note that the kernels contained in this repo are more flexble and memory efficient -- we don't require sequence lengths that are powers of two, unlike `accelerated-scan`.
 
-`accelerated-scan` is overall faster for very small batch sizes (< 4) while both linear scan kernels are significantly faster for larger batch sizes (>=8). 
 <p align="center">
 <img src="imgs/bs_4_dmodel_2048.png" width="500" height="500">
 <img src="imgs/bs_8_dmodel_1536.png" width="500" height="500">
