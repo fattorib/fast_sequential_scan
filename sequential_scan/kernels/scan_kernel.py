@@ -26,21 +26,21 @@ def sequential_scan_fwd_kernel(
     mask = offs < numel
     # compute h_0 outside loop
 
-    hidden_t = tl.load(beta_ptr + offs, mask = mask)
+    hidden_t = tl.load(beta_ptr + offs, mask = mask).to(tl.float32)
 
-    tl.store(hidden_ptr + offs, hidden_t, mask = mask)
+    tl.store(hidden_ptr + offs, hidden_t.to(tl.bfloat16), mask = mask)
 
     for i in range(1, num_context):
         beta_ptr += sq_stride
         alpha_ptr += sq_stride
         hidden_ptr += sq_stride
 
-        alpha_t = tl.load(alpha_ptr + offs, mask = mask)
-        beta_t = tl.load(beta_ptr + offs, mask = mask)
+        alpha_t = tl.load(alpha_ptr + offs, mask = mask).to(tl.float32)
+        beta_t = tl.load(beta_ptr + offs, mask = mask).to(tl.float32)
 
         hidden_t = alpha_t * hidden_t + beta_t
 
-        tl.store(hidden_ptr + offs, hidden_t, mask = mask)
+        tl.store(hidden_ptr + offs, hidden_t.to(tl.bfloat16), mask = mask)
 
 #fmt: off
 @triton.jit
@@ -69,14 +69,14 @@ def sequential_scan_bwd_kernel(
     mask = offs < numel
 
     # compute (t = T) outside loop
-    h_grad = tl.load(d_out_ptr + offs, mask=mask)
-    h_rec = tl.load(h_saved_ptr + offs, mask=mask)
+    h_grad = tl.load(d_out_ptr + offs, mask=mask).to(tl.float32)
+    h_rec = tl.load(h_saved_ptr + offs, mask=mask).to(tl.float32)
 
     d_alpha = h_grad*h_rec
     d_beta = h_grad
 
-    tl.store(d_alpha_ptr + offs, d_alpha,mask=mask)
-    tl.store(d_beta_ptr + offs, d_beta,mask=mask)
+    tl.store(d_alpha_ptr + offs, d_alpha.to(tl.bfloat16),mask=mask)
+    tl.store(d_beta_ptr + offs, d_beta.to(tl.bfloat16),mask=mask)
     
     for _ in range(2, num_context):
         # reduce pointer offsets
@@ -86,9 +86,9 @@ def sequential_scan_bwd_kernel(
         d_out_ptr -= sq_stride
         alpha_saved_ptr -= sq_stride
 
-        alpha = tl.load(alpha_saved_ptr + offs,mask=mask)
-        grad_out = tl.load(d_out_ptr + offs,mask=mask)
-        h_rec = tl.load(h_saved_ptr + offs,mask=mask)
+        alpha = tl.load(alpha_saved_ptr + offs,mask=mask).to(tl.float32)
+        grad_out = tl.load(d_out_ptr + offs,mask=mask).to(tl.float32)
+        h_rec = tl.load(h_saved_ptr + offs,mask=mask).to(tl.float32)
 
 
         h_grad = alpha * h_grad
@@ -97,8 +97,8 @@ def sequential_scan_bwd_kernel(
         d_alpha = h_grad * h_rec
         d_beta = h_grad
 
-        tl.store(d_alpha_ptr + offs, d_alpha,mask=mask)
-        tl.store(d_beta_ptr + offs, d_beta,mask=mask)
+        tl.store(d_alpha_ptr + offs, d_alpha.to(tl.bfloat16),mask=mask)
+        tl.store(d_beta_ptr + offs, d_beta.to(tl.bfloat16),mask=mask)
 
 
     # first grad (t = 0)
@@ -107,8 +107,8 @@ def sequential_scan_bwd_kernel(
     d_out_ptr -= sq_stride
     alpha_saved_ptr -= sq_stride
 
-    alpha = tl.load(alpha_saved_ptr + offs,mask=mask)
-    grad_out = tl.load(d_out_ptr + offs,mask=mask)
+    alpha = tl.load(alpha_saved_ptr + offs,mask=mask).to(tl.float32)
+    grad_out = tl.load(d_out_ptr + offs,mask=mask).to(tl.float32)
     
     h_grad = alpha * h_grad
     h_grad += grad_out
@@ -116,8 +116,8 @@ def sequential_scan_bwd_kernel(
 
     d_alpha = tl.zeros_like(d_beta)
 
-    tl.store(d_alpha_ptr + offs, d_alpha,mask=mask)
-    tl.store(d_beta_ptr + offs, d_beta,mask=mask)
+    tl.store(d_alpha_ptr + offs, d_alpha.to(tl.bfloat16),mask=mask)
+    tl.store(d_beta_ptr + offs, d_beta.to(tl.bfloat16),mask=mask)
 
 def sequential_scan_forward(
     alpha: torch.Tensor,  # [b,sq,d]
@@ -140,8 +140,7 @@ def sequential_scan_forward(
         alpha,beta,hidden,
         alpha.stride(0),alpha.stride(1),
         sq,d,BLOCKSIZE,
-        num_warps = warps
-    )
+        num_warps = warps)
     #fmt: on
     return hidden
 

@@ -46,6 +46,15 @@ inline __device__ void storeToGlobal(const int storePerThread, bf16 *global,
   }
 }
 
+// rounds an array of single precision to an array of bf16 values
+inline __device__ void float2halfreg(const int numElem, bf16 *rmem_half,
+                                     float *rmem_single) {
+#pragma unroll
+  for (int i = 0; i < numElem; i++) {
+    rmem_half[i] = __float2bfloat16(rmem_single[i]);
+  }
+}
+
 template <const int dModel, const int numThread>
 __global__ void sequential_scan_forward_half(bf16 *alpha, bf16 *beta, bf16 *out,
                                              const int numContext) {
@@ -72,7 +81,10 @@ __global__ void sequential_scan_forward_half(bf16 *alpha, bf16 *beta, bf16 *out,
   const int regStoreWidth = regLoadWidth;
 
   constexpr int compPerThread = (dModel / numThread);
-  bf16 h[compPerThread];
+  float h[compPerThread];
+
+  bf16 h_half[compPerThread];
+
   bf16 alphaReg[STAGES][compPerThread];
   bf16 betaReg[STAGES][compPerThread];
 
@@ -86,11 +98,13 @@ __global__ void sequential_scan_forward_half(bf16 *alpha, bf16 *beta, bf16 *out,
   // t = 0, read from beta to recurrent state
 #pragma unroll
   for (int Idx = 0; Idx < compPerThread; Idx++) {
-    h[Idx] = betaReg[nc][Idx];
+    h[Idx] = __bfloat162float(betaReg[nc][Idx]);
   }
   __syncthreads();
 
-  storeToGlobal(storePerThread, out, h, storeOffset, storeWidth, regStoreWidth);
+  float2halfreg(compPerThread, h_half, h);
+  storeToGlobal(storePerThread, out, h_half, storeOffset, storeWidth,
+                regStoreWidth);
 
   __syncthreads();
 
@@ -121,16 +135,16 @@ __global__ void sequential_scan_forward_half(bf16 *alpha, bf16 *beta, bf16 *out,
 
 // recurrence computation in registers
 #pragma unroll
-    for (int Idx = 0; Idx < compPerThread; Idx += 2) {
-      bf162 alphaReg2 = *((bf162 *)(&alphaReg[nc][Idx]));
-      bf162 h2 = *((bf162 *)(&h[Idx]));
-      bf162 betaReg2 = *((bf162 *)(&betaReg[nc][Idx]));
-      bf162 val = __hfma2(alphaReg2, h2, betaReg2);
-      *((bf162 *)(&h[Idx])) = val;
+    for (int Idx = 0; Idx < compPerThread; Idx++) {
+      float alphaReg2 = __bfloat162float(alphaReg[nc][Idx]);
+      float betaReg2 = __bfloat162float(betaReg[nc][Idx]);
+      h[Idx] = (alphaReg2 * h[Idx]) + betaReg2;
     }
     // __syncthreads();
-    storeToGlobal(storePerThread, out, h, storeOffset, storeWidth,
+    float2halfreg(compPerThread, h_half, h);
+    storeToGlobal(storePerThread, out, h_half, storeOffset, storeWidth,
                   regStoreWidth);
+
     nc ^= 1;
 
     __syncthreads();
@@ -139,16 +153,17 @@ __global__ void sequential_scan_forward_half(bf16 *alpha, bf16 *beta, bf16 *out,
   // early exit loop for final compute and store
 
 #pragma unroll
-  for (int Idx = 0; Idx < compPerThread; Idx += 2) {
-    bf162 alphaReg2 = *((bf162 *)(&alphaReg[nc][Idx]));
-    bf162 h2 = *((bf162 *)(&h[Idx]));
-    bf162 betaReg2 = *((bf162 *)(&betaReg[nc][Idx]));
-    bf162 val = __hfma2(alphaReg2, h2, betaReg2);
-    *((bf162 *)(&h[Idx])) = val;
+  for (int Idx = 0; Idx < compPerThread; Idx++) {
+    float alphaReg2 = __bfloat162float(alphaReg[nc][Idx]);
+    float betaReg2 = __bfloat162float(betaReg[nc][Idx]);
+    h[Idx] = (alphaReg2 * h[Idx]) + betaReg2;
   }
   __syncthreads();
   out += seqStride;
-  storeToGlobal(storePerThread, out, h, storeOffset, storeWidth, regStoreWidth);
+
+  float2halfreg(compPerThread, h_half, h);
+  storeToGlobal(storePerThread, out, h_half, storeOffset, storeWidth,
+                regStoreWidth);
 }
 
 template <const int dModel, const int numThread>
@@ -177,8 +192,11 @@ __global__ void sequential_scan_backward_half(bf16 *alpha_saved, bf16 *h_saved,
   const int compPerThread = (dModel / numThread);
 
   // store all variables in registers
-  bf16 hRecGrad[compPerThread];
-  bf16 alphaGrad[compPerThread];
+  bf16 hRecGrad_half[compPerThread];
+  bf16 alphaGrad_half[compPerThread];
+
+  float hRecGrad[compPerThread];
+  float alphaGrad[compPerThread];
 
   bf16 alphaReg[STAGES][compPerThread];
   bf16 hReg[STAGES][compPerThread];
@@ -201,19 +219,30 @@ __global__ void sequential_scan_backward_half(bf16 *alpha_saved, bf16 *h_saved,
                  regLoadWidth);
   __syncthreads();
 
-  for (int Idx = 0; Idx < compPerThread; Idx += 2) {
-    bf162 outGrad2 = *((bf162 *)(&outGrad[nc][Idx]));
-    bf162 hReg2 = *((bf162 *)(&hReg[nc][Idx]));
-    bf162 alphaGrad2 = __hmul2(outGrad2, hReg2);
+  // for (int Idx = 0; Idx < compPerThread; Idx += 2) {
+  //   bf162 outGrad2 = *((bf162 *)(&outGrad[nc][Idx]));
+  //   bf162 hReg2 = *((bf162 *)(&hReg[nc][Idx]));
+  //   bf162 alphaGrad2 = __hmul2(outGrad2, hReg2);
 
-    *((bf162 *)(&hRecGrad[Idx])) = outGrad2;
-    *((bf162 *)(&alphaGrad[Idx])) = alphaGrad2;
+  //   *((bf162 *)(&hRecGrad[Idx])) = outGrad2;
+  //   *((bf162 *)(&alphaGrad[Idx])) = alphaGrad2;
+  // }
+
+#pragma unroll
+  for (int Idx = 0; Idx < compPerThread; Idx++) {
+    float outGrad2 = __bfloat162float(outGrad[nc][Idx]);
+    float hReg2 = __bfloat162float(hReg[nc][Idx]);
+    float alphaGrad2 = outGrad2 * hReg2;
+    hRecGrad[Idx] = outGrad2;
+    alphaGrad[Idx] = alphaGrad2;
   }
 
-  storeToGlobal(storePerThread, grad_beta, hRecGrad, storeOffset, storeWidth,
-                regStoreWidth);
-  storeToGlobal(storePerThread, grad_alpha, alphaGrad, storeOffset, storeWidth,
-                regStoreWidth);
+  float2halfreg(compPerThread, hRecGrad_half, hRecGrad);
+  float2halfreg(compPerThread, alphaGrad_half, alphaGrad);
+  storeToGlobal(storePerThread, grad_beta, hRecGrad_half, storeOffset,
+                storeWidth, regStoreWidth);
+  storeToGlobal(storePerThread, grad_alpha, alphaGrad_half, storeOffset,
+                storeWidth, regStoreWidth);
   __syncthreads();
 
   alpha_saved -= seqStride;
@@ -250,24 +279,28 @@ __global__ void sequential_scan_backward_half(bf16 *alpha_saved, bf16 *h_saved,
     readFromGlobal(loadPerThread, h_saved, hReg[nx], offset, loadWidth,
                    regLoadWidth);
 
-    // actual grad computation
-    for (int Idx = 0; Idx < compPerThread; Idx += 2) {
-      bf162 alphaReg2 = *((bf162 *)(&alphaReg[nc][Idx]));
-      bf162 hRecGrad2 = *((bf162 *)(&hRecGrad[Idx]));
-      bf162 outGrad2 = *((bf162 *)(&outGrad[nc][Idx]));
-      bf162 hReg2 = *((bf162 *)(&hReg[nc][Idx]));
+// actual grad computation
+#pragma unroll
+    for (int Idx = 0; Idx < compPerThread; Idx++) {
+      float alphaReg2 = __bfloat162float(alphaReg[nc][Idx]);
+      float hRecGrad2 = __bfloat162float(hRecGrad[Idx]);
+      float outGrad2 = __bfloat162float(outGrad[nc][Idx]);
+      float hReg2 = __bfloat162float(hReg[nc][Idx]);
 
-      hRecGrad2 = __hfma2(alphaReg2, hRecGrad2, outGrad2);
-      bf162 alphaGrad2 = __hmul2(hRecGrad2, hReg2);
+      hRecGrad2 = (alphaReg2 * hRecGrad2) + outGrad2;
+      float alphaGrad2 = hRecGrad2 * hReg2;
 
-      *((bf162 *)(&hRecGrad[Idx])) = hRecGrad2;
-      *((bf162 *)(&alphaGrad[Idx])) = alphaGrad2;
+      hRecGrad[Idx] = hRecGrad2;
+      alphaGrad[Idx] = alphaGrad2;
     }
 
-    storeToGlobal(storePerThread, grad_alpha, alphaGrad, storeOffset,
+    float2halfreg(compPerThread, hRecGrad_half, hRecGrad);
+    float2halfreg(compPerThread, alphaGrad_half, alphaGrad);
+
+    storeToGlobal(storePerThread, grad_alpha, alphaGrad_half, storeOffset,
                   storeWidth, regStoreWidth);
-    storeToGlobal(storePerThread, grad_beta, hRecGrad, storeOffset, storeWidth,
-                  regStoreWidth);
+    storeToGlobal(storePerThread, grad_beta, hRecGrad_half, storeOffset,
+                  storeWidth, regStoreWidth);
 
     nc ^= 1;
 
@@ -292,24 +325,28 @@ __global__ void sequential_scan_backward_half(bf16 *alpha_saved, bf16 *h_saved,
 
   __syncthreads();
 
-  // actual grad computation
-  for (int Idx = 0; Idx < compPerThread; Idx += 2) {
-    bf162 alphaReg2 = *((bf162 *)(&alphaReg[nc][Idx]));
-    bf162 hRecGrad2 = *((bf162 *)(&hRecGrad[Idx]));
-    bf162 outGrad2 = *((bf162 *)(&outGrad[nc][Idx]));
-    bf162 hReg2 = *((bf162 *)(&hReg[nc][Idx]));
+// actual grad computation
+#pragma unroll
+  for (int Idx = 0; Idx < compPerThread; Idx++) {
+    float alphaReg2 = __bfloat162float(alphaReg[nc][Idx]);
+    float hRecGrad2 = __bfloat162float(hRecGrad[Idx]);
+    float outGrad2 = __bfloat162float(outGrad[nc][Idx]);
+    float hReg2 = __bfloat162float(hReg[nc][Idx]);
 
-    hRecGrad2 = __hfma2(alphaReg2, hRecGrad2, outGrad2);
-    bf162 alphaGrad2 = __hmul2(hRecGrad2, hReg2);
+    hRecGrad2 = (alphaReg2 * hRecGrad2) + outGrad2;
+    float alphaGrad2 = hRecGrad2 * hReg2;
 
-    *((bf162 *)(&hRecGrad[Idx])) = hRecGrad2;
-    *((bf162 *)(&alphaGrad[Idx])) = alphaGrad2;
+    hRecGrad[Idx] = hRecGrad2;
+    alphaGrad[Idx] = alphaGrad2;
   }
 
-  storeToGlobal(storePerThread, grad_alpha, alphaGrad, storeOffset, storeWidth,
-                regStoreWidth);
-  storeToGlobal(storePerThread, grad_beta, hRecGrad, storeOffset, storeWidth,
-                regStoreWidth);
+  float2halfreg(compPerThread, hRecGrad_half, hRecGrad);
+  float2halfreg(compPerThread, alphaGrad_half, alphaGrad);
+
+  storeToGlobal(storePerThread, grad_alpha, alphaGrad_half, storeOffset,
+                storeWidth, regStoreWidth);
+  storeToGlobal(storePerThread, grad_beta, hRecGrad_half, storeOffset,
+                storeWidth, regStoreWidth);
 
   nc ^= 1;
 
@@ -317,13 +354,14 @@ __global__ void sequential_scan_backward_half(bf16 *alpha_saved, bf16 *h_saved,
   grad_alpha -= seqStride;
   grad_beta -= seqStride;
 
-  // actual grad computation
-  for (int Idx = 0; Idx < compPerThread; Idx += 2) {
-    bf162 alphaReg2 = *((bf162 *)(&alphaReg[nc][Idx]));
-    bf162 hRecGrad2 = *((bf162 *)(&hRecGrad[Idx]));
-    bf162 outGrad2 = *((bf162 *)(&outGrad[nc][Idx]));
-    hRecGrad2 = __hfma2(alphaReg2, hRecGrad2, outGrad2);
-    *((bf162 *)(&hRecGrad[Idx])) = hRecGrad2;
+// actual grad computation
+#pragma unroll
+  for (int Idx = 0; Idx < compPerThread; Idx++) {
+    float alphaReg2 = __bfloat162float(alphaReg[nc][Idx]);
+    float hRecGrad2 = __bfloat162float(hRecGrad[Idx]);
+    float outGrad2 = __bfloat162float(outGrad[nc][Idx]);
+    hRecGrad2 = (alphaReg2 * hRecGrad2) + outGrad2;
+    hRecGrad[Idx] = hRecGrad2;
   }
 
   __syncthreads();
@@ -341,10 +379,12 @@ __global__ void sequential_scan_backward_half(bf16 *alpha_saved, bf16 *h_saved,
 
   bf16 *gmem_ptr = &grad_alpha[offset];
 
+#pragma unroll
   for (int loadIdx = 0; loadIdx < loadPerThread; loadIdx++) {
     *((half8 *)(gmem_ptr + (loadWidth * loadIdx))) = tmp;
   }
 
-  storeToGlobal(loadPerThread, grad_beta, hRecGrad, offset, loadWidth,
+  float2halfreg(compPerThread, hRecGrad_half, hRecGrad);
+  storeToGlobal(loadPerThread, grad_beta, hRecGrad_half, offset, loadWidth,
                 regStoreWidth);
 }

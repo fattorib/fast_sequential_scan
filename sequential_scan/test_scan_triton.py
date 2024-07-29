@@ -15,7 +15,6 @@ BFLOAT16_TOL = 2
 @pytest.mark.parametrize("sq", [128, 256, 512, 1024])
 @pytest.mark.parametrize("d", [64, 128, 384, 768])
 def test_fwd(bs, sq, d):
-
     alpha, beta = make_tensors(bs, sq, d)
 
     with torch.no_grad():

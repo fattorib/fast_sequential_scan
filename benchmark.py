@@ -35,7 +35,6 @@ def parse():
 
 
 def main():
-
     args = parse()
 
     @triton.testing.perf_report(
@@ -105,7 +104,7 @@ def main():
             fn = y_fwd
 
         ms, min_ms, max_ms = triton.testing.do_bench(fn, quantiles=quantiles, rep=100)
-        
+
         return ms
 
     bench_scan.run(save_path=".", print_data=True)

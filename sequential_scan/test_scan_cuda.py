@@ -28,7 +28,6 @@ BFLOAT16_TOL = 2.0
 @pytest.mark.parametrize("sq", [128, 256, 512, 1024])
 @pytest.mark.parametrize("d", [512, 768, 1024])
 def test_fwd_single(bs, sq, d):
-
     alpha, beta = make_tensors_single(bs, sq, d)
 
     with torch.no_grad():
@@ -46,7 +45,6 @@ def test_fwd_single(bs, sq, d):
 @pytest.mark.parametrize("sq", [128, 256, 512, 1024])
 @pytest.mark.parametrize("d", [512, 768, 1024])
 def test_bwd_single(bs, sq, d):
-
     alpha, beta = make_tensors_single(bs, sq, d)
 
     alpha.requires_grad_(True), beta.requires_grad_(True)
@@ -83,7 +81,6 @@ def test_bwd_single(bs, sq, d):
 @pytest.mark.parametrize("sq", [128, 256, 512, 1024])
 @pytest.mark.parametrize("d", [512, 768, 1024])
 def test_fwd_half(bs, sq, d):
-
     alpha, beta = make_tensors(bs, sq, d)
 
     with torch.no_grad():
@@ -101,7 +98,6 @@ def test_fwd_half(bs, sq, d):
 @pytest.mark.parametrize("sq", [128, 256, 512, 1024])
 @pytest.mark.parametrize("d", [512, 768, 1024])
 def test_bwd_half(bs, sq, d):
-
     alpha, beta = make_tensors(bs, sq, d)
     alpha.requires_grad_(True), beta.requires_grad_(True)
 
